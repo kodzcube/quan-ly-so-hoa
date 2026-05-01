@@ -40,7 +40,7 @@ app.get('/api/test-bot', async (req, res) => {
     }
 });
 // --- TỰ ĐỘNG HÓA: BÁO CÁO THỰC CHIẾN (17H00 TỪ THỨ 2 -> THỨ 7) ---
-cron.schedule('0 17 * * 1-6', async () => {
+cron.schedule('* * * *', async () => {
     console.log('⏳ Đang soi tiến độ chi tiết từng dự án (17h00)...');
     try {
         const today = new Date();

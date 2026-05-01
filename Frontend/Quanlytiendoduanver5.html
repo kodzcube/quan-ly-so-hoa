@@ -21,6 +21,8 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- Thư viện SheetJS để đọc file Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
     <style>
         ::-webkit-scrollbar {
             width: 8px;
@@ -2224,6 +2226,7 @@
         function dbRowToItem(row) {
             const item = {
                 id: row.id,
+                stt: row.stt || '',
                 name: row.name || '',
                 model: row.model || '',
                 unit: row.unit || 'Bộ',
@@ -2248,6 +2251,7 @@
         function itemToDbRow(item) {
             return {
                 id: item.id,
+                stt: item.stt || '',
                 name: item.name,
                 model: item.model || '',
                 unit: item.unit || 'Bộ',
@@ -2633,6 +2637,76 @@
             const sb = document.getElementById('sidebar');
             if (sb) sb.classList.toggle('collapsed', !state.sidebarOpen);
         }
+        /* ============= HÀM BÓC TÁCH FILE EXCEL ============= */
+        /* ============= HÀM BÓC TÁCH FILE EXCEL (SIÊU CẤP) ============= */
+        function processExcelFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                
+                reader.onload = function(e) {
+                    try {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, {type: 'array'});
+                        
+                        const firstSheetName = workbook.SheetNames[0];
+                        const worksheet = workbook.Sheets[firstSheetName];
+                        
+                        const json_data = XLSX.utils.sheet_to_json(worksheet, {defval: ""}); 
+
+                        let equipmentList = [];
+                        let currentEquipment = null;
+
+                        json_data.forEach(rawRow => {
+                            // 1. DỌN RÁC TIÊU ĐỀ: Đưa về chữ thường, xóa sạch mọi dấu cách
+                            let row = {};
+                            for (let key in rawRow) {
+                                let cleanKey = key.toLowerCase().replace(/\s+/g, '');
+                                row[cleanKey] = rawRow[key];
+                            }
+
+                            // 2. BỐC DỮ LIỆU TỪ CÁC TỪ KHÓA ĐÃ DỌN SẠCH
+                            let sttRaw = row["tt"] || row["stt"] || row["sốtt"] || "";
+                            let ten = row["tênhànghóa"] || row["tênthiếtbị"] || row["tên"] || "";
+                            let tskt = row["yêucầukỹthuật"] || row["tskt"] || row["môtả"] || ten; 
+                            let sl = row["sl"] || row["sốlượng"] || "";
+                            let model = row["model,hãngsảnxuất,xuấtxứhànghóa"] || row["model"] || "";
+
+                            ten = String(ten).trim();
+                            tskt = String(tskt).trim();
+                            sl = String(sl).trim();
+
+                            // 3. CHỐT TÌM THIẾT BỊ
+                            if (sl && !isNaN(sl) && parseInt(sl) > 0) {
+                                currentEquipment = {
+                                    stt: String(sttRaw).trim(),
+                                    name: ten,
+                                    model: String(model).trim(),
+                                    quantity: parseInt(sl),
+                                    note: tskt + "\n"
+                                };
+                                equipmentList.push(currentEquipment);
+                            } 
+                            // 4. CHỐT NỐI TSKT VÀO GHI CHÚ
+                            else if (currentEquipment) {
+                                if (ten === "" && tskt !== "") {
+                                    currentEquipment.note += "• " + tskt + "\n";
+                                }
+                            }
+                        });
+                        
+                        resolve(equipmentList);
+                    } catch (err) {
+                        reject(err);
+                    }
+                };
+                
+                reader.onerror = function(error) {
+                    reject(error);
+                };
+                
+                reader.readAsArrayBuffer(file);
+            });
+        }
 
         /* ============= CREATE / DELETE PROJECT ============= */
         async function openCreateProject() {
@@ -2669,31 +2743,78 @@
                         <label class="text-xs font-semibold text-slate-600 dark:text-slate-300 block mb-1">Mô tả</label>
                         <input type="text" id="np-desc" class="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded text-sm focus:outline-none focus:border-primary" placeholder="(tùy chọn)">
                     </div>
-                    <p class="text-[11px] text-slate-400 italic">Dự án mới bắt đầu trắng — không có thiết bị nào. Thêm thiết bị sau khi tạo.</p>
+
+                    <!-- KHUNG UPLOAD EXCEL ĐƯỢC CHÈN VÀO ĐÂY -->
+                    <div class="mt-4 p-3 border border-dashed border-primary/50 bg-primary/5 dark:bg-primary/10 rounded-lg">
+                        <label for="np-excel-file" class="text-xs font-bold text-primary flex items-center gap-1 mb-2">
+                            <i class="ph-fill ph-file-xls text-lg"></i> [Tùy chọn] Import từ file Excel (Báo giá/TSKT)
+                        </label>
+                        <input type="file" id="np-excel-file" accept=".xlsx, .xls" class="w-full text-xs text-slate-500 file:mr-4 file:py-1.5 file:px-3 file:rounded file:border-0 file:text-xs file:font-semibold file:bg-primary file:text-white hover:file:bg-blue-600 cursor-pointer">
+                        <p class="text-[10px] text-slate-500 mt-1 italic">Hệ thống sẽ tự động bóc tách danh sách mô hình & TSKT kèm theo.</p>
+                    </div>
+
+                    <p class="text-[11px] text-slate-400 italic">Dự án sẽ được tạo kèm theo danh sách thiết bị nếu có tải file.</p>
                 </div>
             `;
+            
+            // Hiện popup, chờ user bấm "Tạo dự án" hoặc "Hủy"
             const result = await openCustomModal(html, ['Hủy', 'Tạo dự án'], true);
             if (result !== 1) return;
 
+            // 1. Lấy dữ liệu user nhập
             const client = document.getElementById('np-client')?.value?.trim();
             const name = document.getElementById('np-name')?.value?.trim();
             const year = parseInt(document.getElementById('np-year')?.value) || new Date().getFullYear();
             const start = document.getElementById('np-start')?.value || null;
             const end = document.getElementById('np-end')?.value || null;
             const desc = document.getElementById('np-desc')?.value?.trim() || '';
+            
+            // Lấy file Excel nếu có
+            const excelFileInput = document.getElementById('np-excel-file');
+            const hasExcelFile = excelFileInput && excelFileInput.files.length > 0;
 
             if (!client || !name) { await customAlert('⚠️ Khách hàng và Tên dự án không được để trống.'); return; }
 
-            const { data: newProj, error } = await db.from('projects').insert({
-                name, client, year, start_date: start, end_date: end,
-                description: desc, created_by: currentUser || ''
-            }).select().single();
+            try {
+                showSyncToast('⏳', 'Đang tạo dự án...', 2000);
+                
+                // TRẠM 1: Bắn lên Supabase để tạo project rỗng
+                const { data: newProj, error } = await db.from('projects').insert({
+                    name, client, year, start_date: start, end_date: end,
+                    description: desc, created_by: currentUser || ''
+                }).select().single();
 
-            if (error) { await customAlert('❌ Lỗi tạo dự án: ' + error.message); return; }
+                if (error) throw error;
+                
+                const projectId = newProj.id;
 
-            await loadProjects();
-            await switchProject(newProj);
-            showSyncToast('✅', `Đã tạo: ${client} / ${name}`, 3000);
+                // TRẠM 2: Rẽ nhánh xử lý Excel
+                if (hasExcelFile) {
+                    showSyncToast('⏳', 'Đang bóc tách file Excel...', 2000);
+                    const file = excelFileInput.files[0];
+                    
+                    // Gọi hàm bóc tách (hàm processExcelFile sếp đã thêm ở bước trước)
+                    const parsedEquipments = await processExcelFile(file);
+                    
+                    if (parsedEquipments && parsedEquipments.length > 0) {
+                        showSyncToast('⏳', `Đang lưu ${parsedEquipments.length} mô hình lên cloud...`, 3000);
+                        // Gọi Trạm 3: Đẩy hàng loạt vào DB
+                        await bulkInsertEquipments(projectId, parsedEquipments);
+                    } else {
+                        console.warn("File Excel không có dữ liệu thiết bị hợp lệ.");
+                        await customAlert("Tạo dự án thành công nhưng không tìm thấy thiết bị nào hợp lệ trong file Excel!");
+                    }
+                }
+
+                // Thành công, tải lại danh sách project và mở project mới tạo
+                await loadProjects();
+                await switchProject(newProj);
+                showSyncToast('✅', `Đã tạo: ${client} / ${name}`, 3000);
+                
+            } catch (err) {
+                console.error("Lỗi khi tạo dự án:", err);
+                await customAlert('❌ Lỗi tạo dự án: ' + err.message);
+            }
         }
 
         async function deleteProject(projId) {
@@ -3321,6 +3442,7 @@
         }
 
         /* ----- Spreadsheet Table ----- */
+        /* ----- Spreadsheet Table ----- */
         function renderTable() {
             const tbody = document.getElementById('table-body');
             const search = document.getElementById('search-input').value.toLowerCase();
@@ -3330,7 +3452,7 @@
             let displayData = [...state.equipments].filter(e => {
                 // Soft-deleted items: chỉ hiện khi user chủ động chọn filter "Đã xóa"
                 if (e.status === 'Đã xóa' && filterStatus !== 'Đã xóa') return false;
-                const matchSearch = e.name.toLowerCase().includes(search) || e.model.toLowerCase().includes(search) || e.id.toString().includes(search);
+                const matchSearch = e.name.toLowerCase().includes(search) || (e.model || '').toLowerCase().includes(search) || e.id.toString().includes(search);
                 const matchStatus = filterStatus ? e.status === filterStatus : true;
                 let matchPerson = true;
                 if (filterPerson === 'tri' || filterPerson === 'tien' || filterPerson === 'tung') {
@@ -3351,7 +3473,7 @@
                 return 0;
             });
 
-            tbody.innerHTML = displayData.map(e => {
+            tbody.innerHTML = displayData.map((e, index) => {
                 const isPaused = e.status === 'Tạm dừng';
                 const isDeleted = e.status === 'Đã xóa';
                 let rowClass = 'row-bg-normal';
@@ -3361,7 +3483,6 @@
                 else if (e.totalPct >= 30) rowClass = 'row-bg-warn';
                 const disabledAttr = (isPaused || isDeleted) ? 'disabled' : '';
 
-                // Dòng này rất quan trọng, nó phải nằm ở đây:
                 let stagesHtml = '';
 
                 e.stages.forEach((st, idx) => {
@@ -3408,12 +3529,12 @@
 
                 return `
                     <tr id="row-${e.id}" class="${rowClass} transition-colors group/row">
-                        <td class="text-center font-semibold text-slate-500">${e.id}</td>
+                        <td class="text-center font-bold text-slate-700" title="ID hệ thống: #${e.id}">${e.stt || (index + 1)}</td>
                         <td class="min-w-[280px]" style="max-width: 320px;">
                             <div class="flex flex-col gap-0.5 w-full">
-                                <input type="text" class="cell-input font-medium text-slate-800 dark:text-slate-200 text-[13px]" value="${e.name.replace(/"/g, '&quot;')}" data-id="${e.id}" data-field="name" placeholder="Tên thiết bị..." ${disabledAttr}>
+                                <input type="text" class="cell-input font-medium text-slate-800 dark:text-slate-200 text-[13px]" value="${(e.name || '').replace(/"/g, '&quot;')}" data-id="${e.id}" data-field="name" placeholder="Tên thiết bị..." ${disabledAttr}>
                                 <div class="flex items-center gap-2">
-                                    <input type="text" class="cell-input text-[10px] text-slate-500 dark:text-slate-400 italic flex-1" value="${e.model.replace(/"/g, '&quot;')}" data-id="${e.id}" data-field="model" placeholder="Model..." ${disabledAttr}>
+                                    <input type="text" class="cell-input text-[10px] text-slate-500 dark:text-slate-400 italic flex-1" value="${(e.model || '').replace(/"/g, '&quot;')}" data-id="${e.id}" data-field="model" placeholder="Model..." ${disabledAttr}>
                                     <span class="text-[10px] text-slate-400 shrink-0">SL:</span>
                                     <input type="number" class="cell-input text-[10px] text-slate-600 dark:text-slate-300 font-semibold text-center" value="${e.qty}" data-id="${e.id}" data-field="qty" min="1" style="width:34px;" ${disabledAttr}>
                                     <span class="text-[10px] text-slate-400 shrink-0">${e.unit || ''}</span>
@@ -3430,8 +3551,15 @@
                             </select>
                         </td>
                         ${stagesHtml}
-                        <td class="text-center font-bold text-primary cell-total-pct text-base bg-white dark:bg-slate-800" style="min-width: 70px;">${e.totalPct.toFixed(1)}%</td>
-                        <td style="min-width: 130px;"><input type="text" class="cell-input text-xs text-slate-500 italic" value="${e.note}" data-id="${e.id}" data-field="note" placeholder="Thêm ghi chú..." ${disabledAttr}></td>
+                        <td class="text-center font-bold text-primary cell-total-pct text-base bg-white dark:bg-slate-800" style="min-width: 70px;">${(e.totalPct || 0).toFixed(1)}%</td>
+                        <!-- DÒNG MỚI CHÈN VÀO: -->
+                        <td style="min-width: 130px; max-width: 220px;">
+                            <div onclick="${isPaused || isDeleted ? '' : `openNoteModal(${e.id})`}" 
+                                class="cell-input text-xs text-slate-500 italic truncate cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-700" 
+                                title="Click để xem/sửa toàn bộ nội dung">
+                                ${e.note ? String(e.note).replace(/\n/g, ' / ').replace(/"/g, '&quot;') : 'Thêm ghi chú...'}
+                            </div>
+                        </td>
                         <td class="text-center" style="min-width: 60px;">
                             ${isDeleted
                         ? `<button onclick="restoreEquipment(${e.id})" class="text-success hover:text-emerald-700 px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/30 transition" title="Khôi phục thiết bị này">
@@ -3449,7 +3577,6 @@
                 el.addEventListener('change', onCellChange);
             });
 
-            // Stepper buttons (+/−) — bước nhảy 5%, hiện ra khi hover ô giai đoạn
             tbody.querySelectorAll('.pct-stepper').forEach(btn => {
                 btn.addEventListener('click', onStepperClick);
             });
@@ -4410,6 +4537,68 @@ ${state.blockers.filter(b => b.status !== 'Đã giải quyết').slice(0, 10).ma
                 }
             });
         });
+       // Hàm đẩy hàng loạt thiết bị (đã bóc tách từ Excel) lên Supabase
+        // Hàm mở Popup xem/sửa Ghi chú chi tiết
+        async function openNoteModal(id) {
+            const item = state.equipments.find(e => e.id === id);
+            if (!item) return;
+
+            const html = `
+                <h3 class="text-lg font-bold mb-2 flex items-center gap-2">
+                    <i class="ph-fill ph-notepad text-warning"></i> Ghi chú / TSKT chi tiết
+                </h3>
+                <p class="text-xs text-slate-500 mb-4">Thiết bị: <strong class="text-slate-800 dark:text-slate-200">${item.name}</strong></p>
+                <textarea id="edit-note-textarea" class="w-full h-64 p-3 text-sm leading-relaxed bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg focus:outline-none focus:border-primary resize-none shadow-inner" placeholder="Nhập ghi chú hoặc thông số kỹ thuật chi tiết...">${item.note || ''}</textarea>
+            `;
+
+            // Mở modal dạng wide (rộng) để dễ nhìn
+            const result = await openCustomModal(html, ['Đóng', 'Lưu thay đổi'], true); 
+            
+            if (result === 1) {
+                const newNote = document.getElementById('edit-note-textarea').value;
+                if (newNote !== item.note) {
+                    item.note = newNote;
+                    // Kích hoạt lưu lên Supabase và tự động cập nhật lại bảng
+                    triggerSave(`Sửa ghi chú TB #${id}`, id);
+                }
+            }
+        }
+        async function bulkInsertEquipments(projectId, equipmentList) {
+            // 1. Tạo một bộ 9 giai đoạn trống (0%) cho mỗi thiết bị
+            const defaultStages = Array(9).fill(null).map((_, i) => ({
+                pct: 0,
+                deadline: getDefaultDeadline(i), 
+                confirmed: false
+            }));
+
+            // TẠO MỘT MÃ GỐC NGẪU NHIÊN 9 CHỮ SỐ (Dưới 2 tỷ để vừa với int4)
+            const baseId = Math.floor(Math.random() * 1000000) * 1000;
+
+            // 2. Chế biến lại mảng dữ liệu cho đúng form của bảng 'equipments'
+            const finalDataToInsert = equipmentList.map((eq, index) => ({
+                id: baseId + index, // 🛡️ BÙA HỘ MỆNH VER 2: Dưới 2 tỷ, an toàn tuyệt đối
+                project_id: projectId,
+                stt: eq.stt,
+                name: eq.name,
+                model: eq.model,
+                unit: 'Bộ',
+                qty: eq.quantity, 
+                note: eq.note, 
+                stages: defaultStages, 
+                status: "Chưa bắt đầu",
+                total_pct: 0
+                
+            }));
+
+            // 3. Thực hiện Bulk Insert: Đẩy cả mảng lên Supabase trong 1 lệnh duy nhất!
+            const { error } = await db.from('equipments').insert(finalDataToInsert);
+
+            if (error) {
+                console.error("Lỗi Bulk Insert:", error);
+                throw error;
+            }
+            console.log(`Đã đẩy thành công ${finalDataToInsert.length} thiết bị vào DB!`);
+        }
     </script>
 </body>
 
